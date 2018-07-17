@@ -4,6 +4,7 @@
 
 import torch
 import torchvision
+from torch.autograd import Variable
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 from torchvision import transforms
@@ -29,7 +30,7 @@ def imagenet_label2_mnist_label(imagenet_label):
     return imagenet_label[:,:10]
 
 def tensor2var(tensor, cuda=False, volatile=False):
-    var = torch.autograd.Variable(tensor, volatile=volatile)
+    var = Variable(tensor, volatile=volatile)
     if cuda:
         var = var.cuda(0)
     return var
@@ -102,15 +103,15 @@ M = tensor2var(torch.from_numpy(M), cuda=cuda)
 
 # Learnable parameter
 if restore:
-    W = torch.autograd.Variable(torch.load(os.path.join(train_dir, 'W_{:03d}.pt'.format(restore))).data, requires_grad=True)
+    W = Variable(torch.load(os.path.join(train_dir, 'W_{:03d}.pt'.format(restore))).data, requires_grad=True)
 else:
-    W = torch.autograd.Variable(torch.randn(M.shape), requires_grad=True)
+    W = Variable(torch.randn(M.shape), requires_grad=True)
     # W = Parameter(torch.randn(M.shape), requires_grad=True)
 
 # optimizer
 BCE = torch.nn.BCELoss()
 optimizer = torch.optim.Adam([W], lr=lr, betas=(0.5, 0.999))
-optimizer = torch.optim.SGD([{'params': W}], lr=lr)
+# optimizer = torch.optim.SGD([W], lr=lr)
 lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=decay)
 
 if cuda:
@@ -127,9 +128,10 @@ for i in range(max_epoch):
         label = torch.zeros(batch_size, 10).scatter_(1, label.view(-1,1), 1)
         label = tensor2var(label, cuda=cuda)
 
-        X = torch.zeros(batch_size, 3, h1, w1)
-        X[:,:,(h1-h2)//2:(h1+h2)//2, (w1-w2)//2:(w1+w2)//2] = torch.from_numpy(image)
-        X = tensor2var(X, cuda=cuda)
+        X = np.zeros((batch_size, 3, h1, w1), dtype=np.float32)
+        X[:,:,(h1-h2)//2:(h1+h2)//2, (w1-w2)//2:(w1+w2)//2] = image
+        X = tensor2var(torch.from_numpy(X), cuda=cuda)
+
         P = torch.sigmoid(W * M)
         X_adv = X + P # range [0, 1]
         X_adv = (X_adv - mean) / std
@@ -137,12 +139,15 @@ for i in range(max_epoch):
         Y_adv = resnet50(X_adv)
         Y_adv = F.softmax(Y_adv, 1)
         out = imagenet_label2_mnist_label(Y_adv)
-        loss = BCE(out, label) #+ lmd * torch.norm(W) ** 2
+        # loss = BCE(out, label) #+ lmd * torch.norm(W) ** 2
+        loss =  lmd * torch.norm(W) ** 2
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         print(torch.norm(W).data.cpu().numpy())
         print('epoch %03d/%03d, batch %06d, loss %.6f' % (i + 1, max_epoch, j + 1, loss.data.cpu().numpy()))
+        from IPython import embed; embed();exit()
     torch.save(W, os.path.join(train_dir, 'W_{:03d}.pt'.format(i)))
 
     # test
