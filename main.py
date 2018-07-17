@@ -29,10 +29,11 @@ if not os.path.exists(train_dir):
 def imagenet_label2_mnist_label(imagenet_label):
     return imagenet_label[:,:10]
 
-def tensor2var(tensor, cuda=False, volatile=False):
-    var = Variable(tensor, volatile=volatile)
+def tensor2var(tensor, requires_grad=False, cuda=False, volatile=False):
     if cuda:
-        var = var.cuda(0)
+        with torch.cuda.device(0):
+            tensor = tensor.cuda()
+    var = Variable(tensor, requires_grad=requires_grad, volatile=volatile)
     return var
 
 def generator(dataloader):
@@ -101,12 +102,13 @@ c_w, c_h = int(np.ceil(w1/2.)), int(np.ceil(h1/2.))
 M[:,c_h-h2//2:c_h+h2, c_w-w2//2:c_w+w2//2] = 0
 M = tensor2var(torch.from_numpy(M), cuda=cuda)
 
-# Learnable parameter
+# Learnable parameter W
 if restore:
-    W = Variable(torch.load(os.path.join(train_dir, 'W_{:03d}.pt'.format(restore))).data, requires_grad=True)
+    W = torch.load(os.path.join(train_dir, 'W_{:03d}.pt'.format(restore))).data
 else:
-    W = Variable(torch.randn(M.shape), requires_grad=True)
-    # W = Parameter(torch.randn(M.shape), requires_grad=True)
+    W = torch.randn(M.shape)
+
+W = tensor2var(W, requires_grad=True, cuda=cuda)
 
 # optimizer
 BCE = torch.nn.BCELoss()
@@ -116,9 +118,9 @@ lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=d
 
 if cuda:
     with torch.cuda.device(0):
-        W = W.cuda()
         BCE.cuda()
         resnet50.cuda()
+
 
 # start training
 for i in range(max_epoch):
@@ -139,16 +141,14 @@ for i in range(max_epoch):
         Y_adv = resnet50(X_adv)
         Y_adv = F.softmax(Y_adv, 1)
         out = imagenet_label2_mnist_label(Y_adv)
-        # loss = BCE(out, label) #+ lmd * torch.norm(W) ** 2
-        loss =  lmd * torch.norm(W) ** 2
+        loss = BCE(out, label) #+ lmd * torch.norm(W) ** 2
+        # loss =  lmd * torch.norm(W) ** 2
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         print(torch.norm(W).data.cpu().numpy())
         print('epoch %03d/%03d, batch %06d, loss %.6f' % (i + 1, max_epoch, j + 1, loss.data.cpu().numpy()))
-        from IPython import embed; embed();exit()
-    torch.save(W, os.path.join(train_dir, 'W_{:03d}.pt'.format(i)))
 
     # test
     acc = 0.0
