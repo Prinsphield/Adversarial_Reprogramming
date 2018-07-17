@@ -103,6 +103,6 @@ venv.bak/
 # mypy
 .mypy_cache/
 
-train_log/
-models/
-datasets/
+train_log
+models
+datasets
