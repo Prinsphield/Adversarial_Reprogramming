@@ -52,8 +52,8 @@ resnet50.load_state_dict(torch.load('./models/resnet50-19c8e357.pth'))
 resnet50.eval()
 
 kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-train_set = torchvision.datasets.MNIST('./datasets/mnist/', train=True, transform=transform, download=False)
-test_set = torchvision.datasets.MNIST('./datasets/mnist/', train=False, transform=transform, download=False)
+train_set = torchvision.datasets.MNIST('./datasets/mnist/', train=True, transform=transform, download=True)
+test_set = torchvision.datasets.MNIST('./datasets/mnist/', train=False, transform=transform, download=True)
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, **kwargs)
 test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True, **kwargs)
 # train_generator = generator(train_loader)
@@ -121,7 +121,6 @@ if cuda:
         BCE.cuda()
         resnet50.cuda()
 
-
 # start training
 for i in range(max_epoch):
     for j, (image, label) in enumerate(train_loader):
@@ -141,13 +140,11 @@ for i in range(max_epoch):
         Y_adv = resnet50(X_adv)
         Y_adv = F.softmax(Y_adv, 1)
         out = imagenet_label2_mnist_label(Y_adv)
-        loss = BCE(out, label) #+ lmd * torch.norm(W) ** 2
-        # loss =  lmd * torch.norm(W) ** 2
+        loss = BCE(out, label) + lmd * torch.norm(W) ** 2
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        print(torch.norm(W).data.cpu().numpy())
         print('epoch %03d/%03d, batch %06d, loss %.6f' % (i + 1, max_epoch, j + 1, loss.data.cpu().numpy()))
 
     # test
