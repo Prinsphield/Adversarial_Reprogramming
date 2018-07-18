@@ -34,19 +34,19 @@ class Program(nn.Module):
             mean = mean[..., np.newaxis, np.newaxis]
             std = np.array([0.229, 0.224, 0.225],dtype=np.float32)
             std = std[..., np.newaxis, np.newaxis]
-            self.mean = torch.from_numpy(mean)
-            self.std = torch.from_numpy(std)
+            self.mean = Parameter(torch.from_numpy(mean), requires_grad=False)
+            self.std = Parameter(torch.from_numpy(std), requires_grad=False)
         else:
             raise NotImplementationError()
         self.net.eval()
         for param in self.net.parameters():
             param.requires_grad = False
 
-    def tensor2var(self, tensor, requires_grad=False, volatile=False):
-        if self.gpu:
-            with torch.cuda.device(self.gpu[0]):
-                tensor = tensor.cuda()
-        return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
+    # def tensor2var(self, tensor, requires_grad=False, volatile=False):
+    #     if self.gpu:
+    #         with torch.cuda.device(self.gpu[0]):
+    #             tensor = tensor.cuda()
+    #     return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
 
     def init_mask(self):
         M = torch.ones(3, self.cfg.h1, self.cfg.w1)
@@ -58,16 +58,12 @@ class Program(nn.Module):
         return imagenet_label[:,:10]
 
     def forward(self, image):
-        # image = np.tile(image, (1,3,1,1))
-        # X = np.zeros((self.cfg.batch_size, 3, self.cfg.h1, self.cfg.w1), dtype=np.float32)
-        # X[:,:,(self.cfg.h1-self.cfg.h2)//2:(self.cfg.h1+self.cfg.h2)//2, (self.cfg.w1-self.cfg.w2)//2:(self.cfg.w1+self.cfg.w2)//2] = image
-
         image = image.repeat(1,3,1,1)
         X = image.data.new(self.cfg.batch_size, 3, self.cfg.h1, self.cfg.w1)
-        X[:,:,(self.cfg.h1-self.cfg.h2)//2:(self.cfg.h1+self.cfg.h2)//2, (self.cfg.w1-self.cfg.w2)//2:(self.cfg.w1+self.cfg.w2)//2] = image.data
+        X[:,:,(self.cfg.h1-self.cfg.h2)//2:(self.cfg.h1+self.cfg.h2)//2, (self.cfg.w1-self.cfg.w2)//2:(self.cfg.w1+self.cfg.w2)//2] = image.data.clone()
+        X = Variable(X, requires_grad=True)
 
         P = torch.sigmoid(self.W * self.M)
-        from IPython import embed; embed();
         X_adv = X + P
         X_adv = (X_adv - self.mean) / self.std
         Y_adv = self.net(X_adv)
@@ -139,30 +135,15 @@ class Adversarial_Reprogramming(object):
                 tensor = tensor.cuda()
         return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
 
-    def forward(self, image):
-        image = np.tile(image, (1,3,1,1))
-        X = np.zeros((self.cfg.batch_size, 3, self.cfg.h1, self.cfg.w1), dtype=np.float32)
-        X[:,:,(self.cfg.h1-self.cfg.h2)//2:(self.cfg.h1+self.cfg.h2)//2, (self.cfg.w1-self.cfg.w2)//2:(self.cfg.w1+self.cfg.w2)//2] = image
-        X = self.tensor2var(torch.from_numpy(X))
-
-        P = torch.sigmoid(self.W * self.M)
-        X_adv = X + P # range [0, 1]
-        X_adv = (X_adv - self.mean) / self.std
-
-        Y_adv = self.net(X_adv)
-        Y_adv = F.softmax(Y_adv, 1)
-        return self.imagenet_label2_mnist_label(Y_adv)
-
     def compute_loss(self, out, label):
         label = torch.zeros(self.cfg.batch_size, 10).scatter_(1, label.view(-1,1), 1)
         label = self.tensor2var(label)
-        return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.W) ** 2
+        return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.Program.W) ** 2
 
     def validate(self):
         acc = 0.0
         for i, (image, label) in enumerate(self.test_loader):
             image = self.tensor2var(image)
-            label = self.tensor2var(label)
             out = self.Program(image)
             pred = out.data.cpu().numpy().argmax(1)
             acc += sum(label.numpy() == pred) / float(len(label) * len(self.test_loader))
@@ -174,14 +155,13 @@ class Adversarial_Reprogramming(object):
             self.lr_scheduler.step()
             for j, (image, label) in tqdm(enumerate(self.train_loader)):
                 image = self.tensor2var(image)
-                label = self.tensor2var(label)
                 self.out = self.Program(image)
                 self.loss = self.compute_loss(self.out, label)
                 self.optimizer.zero_grad()
                 self.loss.backward()
                 self.optimizer.step()
             print('epoch: %03d/%03d, loss: %.6f' % (self.epoch, self.cfg.max_epoch, self.loss.data.cpu().numpy()))
-            torch.save({'W': self.Program.W}, os.path.join(self.cfg.train_dir, 'Program_%03d.pt' % self.epoch))
+            torch.save({'W': self.Program.W}, os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.epoch))
             self.validate()
 
     def test(self):
