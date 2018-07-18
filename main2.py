@@ -17,9 +17,10 @@ from tqdm import tqdm, trange
 
 
 class Program(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, gpu):
         super(Program, self).__init__()
         self.cfg = cfg
+        self.gpu = gpu
         self.init_net()
         self.init_mask()
         self.W = Parameter(torch.randn(self.M.shape), requires_grad=True)
@@ -59,8 +60,8 @@ class Program(nn.Module):
 
     def forward(self, image):
         image = image.repeat(1,3,1,1)
-        X = image.data.new(self.cfg.batch_size, 3, self.cfg.h1, self.cfg.w1)
-        X[:,:,(self.cfg.h1-self.cfg.h2)//2:(self.cfg.h1+self.cfg.h2)//2, (self.cfg.w1-self.cfg.w2)//2:(self.cfg.w1+self.cfg.w2)//2] = image.data.clone()
+        X = image.data.new(self.cfg.batch_size//len(self.gpu), 3, self.cfg.h1, self.cfg.w1)
+        X[:,:,int((self.cfg.h1-self.cfg.h2)//2):int((self.cfg.h1+self.cfg.h2)//2), int((self.cfg.w1-self.cfg.w2)//2):int((self.cfg.w1+self.cfg.w2)//2)] = image.data.clone()
         X = Variable(X, requires_grad=True)
 
         P = torch.sigmoid(self.W * self.M)
@@ -78,7 +79,7 @@ class Adversarial_Reprogramming(object):
         self.restore = args.restore
         self.cfg = cfg
         self.init_dataset()
-        self.Program = Program(self.cfg)
+        self.Program = Program(self.cfg, self.gpu)
         self.set_mode_and_gpu()
         self.restore_from_file()
 
@@ -123,8 +124,16 @@ class Adversarial_Reprogramming(object):
             assert os.path.exists(ckpt)
             self.Program.load_state_dict(torch.load(ckpt), False)
             self.start_epoch = self.restore + 1
+            for i in range(self.restore):
+                self.lr_scheduler().step()
         else:
             self.start_epoch = 1
+
+    @property
+    def get_W(self):
+        for p in self.Program.parameters():
+            if p.requires_grad:
+                return p
 
     def imagenet_label2_mnist_label(self, imagenet_label):
         return imagenet_label[:,:10]
@@ -138,7 +147,7 @@ class Adversarial_Reprogramming(object):
     def compute_loss(self, out, label):
         label = torch.zeros(self.cfg.batch_size, 10).scatter_(1, label.view(-1,1), 1)
         label = self.tensor2var(label)
-        return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.Program.W) ** 2
+        return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.get_W) ** 2
 
     def validate(self):
         acc = 0.0
@@ -161,7 +170,7 @@ class Adversarial_Reprogramming(object):
                 self.loss.backward()
                 self.optimizer.step()
             print('epoch: %03d/%03d, loss: %.6f' % (self.epoch, self.cfg.max_epoch, self.loss.data.cpu().numpy()))
-            torch.save({'W': self.Program.W}, os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.epoch))
+            torch.save({'W': self.get_W}, os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.epoch))
             self.validate()
 
     def test(self):
