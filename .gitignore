@@ -103,6 +103,10 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+*.out
+*.err
+*slurm
+
 train_log*
 models
 datasets

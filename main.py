@@ -1,9 +1,11 @@
 # -*- coding:utf-8 -*-
 # Created Time: Thu 05 Jul 2018 10:00:41 PM CST
 # Author: Taihong Xiao <xiaotaihong@126.com>
+from config import cfg
 
 import torch
 import torchvision
+import torch.nn as nn
 from torch.autograd import Variable
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
@@ -11,163 +13,180 @@ from torchvision import transforms
 import numpy as np
 import os
 import argparse
-
-train_dir = 'train_log'
-cuda = True
-batch_size = 30
-w1, h1 = 224, 224
-w2, h2 = 28, 28
-lmd = 5e-5
-lr = 0.005
-decay = 0.99
-max_epoch = 30
-restore = False
-
-if not os.path.exists(train_dir):
-    os.makedirs(train_dir)
-
-def imagenet_label2_mnist_label(imagenet_label):
-    return imagenet_label[:,:10]
-
-def tensor2var(tensor, requires_grad=False, cuda=False, volatile=False):
-    if cuda:
-        with torch.cuda.device(0):
-            tensor = tensor.cuda()
-    var = Variable(tensor, requires_grad=requires_grad, volatile=volatile)
-    return var
-
-def generator(dataloader):
-    while True:
-        for data in dataloader:
-            yield data
-
-transform = transforms.Compose([
-        # you can add other transformations in this list
-        transforms.ToTensor()
-])
+from tqdm import tqdm, trange
 
 
-resnet50 = torchvision.models.resnet50(pretrained=False)
-resnet50.load_state_dict(torch.load('./models/resnet50-19c8e357.pth'))
-resnet50.eval()
+class Program(nn.Module):
+    def __init__(self, cfg, gpu):
+        super(Program, self).__init__()
+        self.cfg = cfg
+        self.gpu = gpu
+        self.init_net()
+        self.init_mask()
+        self.W = Parameter(torch.randn(self.M.shape), requires_grad=True)
 
-kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-train_set = torchvision.datasets.MNIST('./datasets/mnist/', train=True, transform=transform, download=True)
-test_set = torchvision.datasets.MNIST('./datasets/mnist/', train=False, transform=transform, download=True)
-train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, **kwargs)
-test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True, **kwargs)
-# train_generator = generator(train_loader)
-# test_generator = generator(test_loader)
+    def init_net(self):
+        if self.cfg.net == 'resnet50':
+            self.net = torchvision.models.resnet50(pretrained=False)
+            self.net.load_state_dict(torch.load('./models/resnet50-19c8e357.pth'))
 
-# test image read
+            # mean and std for input
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            mean = mean[..., np.newaxis, np.newaxis]
+            std = np.array([0.229, 0.224, 0.225],dtype=np.float32)
+            std = std[..., np.newaxis, np.newaxis]
+            self.mean = Parameter(torch.from_numpy(mean), requires_grad=False)
+            self.std = Parameter(torch.from_numpy(std), requires_grad=False)
+        else:
+            raise NotImplementationError()
+        self.net.eval()
+        for param in self.net.parameters():
+            param.requires_grad = False
 
-# from PIL import Image
-# import time
+    def init_mask(self):
+        M = torch.ones(3, self.cfg.h1, self.cfg.w1)
+        c_w, c_h = int(np.ceil(self.cfg.w1/2.)), int(np.ceil(self.cfg.h1/2.))
+        M[:,c_h-self.cfg.h2//2:c_h+self.cfg.h2, c_w-self.cfg.w2//2:c_w+self.cfg.w2//2] = 0
+        self.M = Parameter(M, requires_grad=False)
 
-# t1 = time.time()
-# img1 = np.asanyarray(Image.open('dog.jpg').resize((224,224)))
-# img1 = np.transpose(img1, (2,0,1)) / 255.
-# t2 = time.time()
+    def imagenet_label2_mnist_label(self, imagenet_label):
+        return imagenet_label[:,:10]
 
-# import cv2
-# img = cv2.cvtColor(cv2.imread('cat1.jpg'), cv2.COLOR_BGR2RGB)
-# img = cv2.resize(img, (224,224))
-# img = np.transpose(img, (2,0,1)) / 255.
+    def forward(self, image):
+        image = image.repeat(1,3,1,1)
+        X = image.data.new(self.cfg.batch_size//len(self.gpu), 3, self.cfg.h1, self.cfg.w1)
+        X[:,:,int((self.cfg.h1-self.cfg.h2)//2):int((self.cfg.h1+self.cfg.h2)//2), int((self.cfg.w1-self.cfg.w2)//2):int((self.cfg.w1+self.cfg.w2)//2)] = image.data.clone()
+        X = Variable(X, requires_grad=True)
 
-
-# mean = np.array([0.485, 0.456, 0.406])
-# mean = mean[..., np.newaxis, np.newaxis]
-# std = np.array([0.229, 0.224, 0.225])
-# std = std[..., np.newaxis, np.newaxis]
-
-# img = (img - mean) / std
-# img = img[np.newaxis, ...].astype(np.float32)
-# x = tensor2var(torch.from_numpy(img))
-# out = resnet50(x)
-# print(np.argmax(out.data.numpy()))
-# from IPython import embed; embed();
-
-
-# mean and std for input
-mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-mean = mean[..., np.newaxis, np.newaxis]
-std = np.array([0.229, 0.224, 0.225],dtype=np.float32)
-std = std[..., np.newaxis, np.newaxis]
-mean = tensor2var(torch.from_numpy(mean), cuda=cuda)
-std = tensor2var(torch.from_numpy(std), cuda=cuda)
-
-# create mask M
-M = np.ones((3, h1, w1), dtype=np.float32)
-c_w, c_h = int(np.ceil(w1/2.)), int(np.ceil(h1/2.))
-M[:,c_h-h2//2:c_h+h2, c_w-w2//2:c_w+w2//2] = 0
-M = tensor2var(torch.from_numpy(M), cuda=cuda)
-
-# Learnable parameter W
-if restore:
-    W = torch.load(os.path.join(train_dir, 'W_{:03d}.pt'.format(restore))).data
-else:
-    W = torch.randn(M.shape)
-
-W = tensor2var(W, requires_grad=True, cuda=cuda)
-
-# optimizer
-BCE = torch.nn.BCELoss()
-optimizer = torch.optim.Adam([W], lr=lr, betas=(0.5, 0.999))
-# optimizer = torch.optim.SGD([W], lr=lr)
-lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=decay)
-
-if cuda:
-    with torch.cuda.device(0):
-        BCE.cuda()
-        resnet50.cuda()
-
-# start training
-for i in range(max_epoch):
-    for j, (image, label) in enumerate(train_loader):
-        lr_scheduler.step()
-        image = np.tile(image, (1,3,1,1))
-        label = torch.zeros(batch_size, 10).scatter_(1, label.view(-1,1), 1)
-        label = tensor2var(label, cuda=cuda)
-
-        X = np.zeros((batch_size, 3, h1, w1), dtype=np.float32)
-        X[:,:,(h1-h2)//2:(h1+h2)//2, (w1-w2)//2:(w1+w2)//2] = image
-        X = tensor2var(torch.from_numpy(X), cuda=cuda)
-
-        P = torch.sigmoid(W * M)
-        X_adv = X + P # range [0, 1]
-        X_adv = (X_adv - mean) / std
-
-        Y_adv = resnet50(X_adv)
+        P = torch.sigmoid(self.W * self.M)
+        X_adv = X + P
+        X_adv = (X_adv - self.mean) / self.std
+        Y_adv = self.net(X_adv)
         Y_adv = F.softmax(Y_adv, 1)
-        out = imagenet_label2_mnist_label(Y_adv)
-        loss = BCE(out, label) + lmd * torch.norm(W) ** 2
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        print('epoch %03d/%03d, batch %06d, loss %.6f' % (i + 1, max_epoch, j + 1, loss.data.cpu().numpy()))
-
-    # test
-    acc = 0.0
-    for j, (image, label) in enumerate(test_loader):
-        image = np.tile(image, (1,3,1,1))
-        # label = torch.zeros(batch_size, 10).scatter_(1, label.view(-1,1), 1)
-        # label = tensor2var(label)
-
-        X = torch.zeros(batch_size, 3, h1, w1)
-        X[:,:,(h1-h2)//2:(h1+h2)//2, (w1-w2)//2:(w1+w2)//2] = torch.from_numpy(image)
-        X = tensor2var(X)
-        if cuda:
-            with torch.cuda.device(0):
-                X = X.cuda()
-        P = torch.sigmoid(W * M)
-        X_adv = X + P # range [0, 1]
-
-        Y_adv = resnet50(X_adv)
-        Y_adv = F.softmax(Y_adv, 1)
-        out = imagenet_label2_mnist_label(Y_adv)
-        pred = out.data.cpu().numpy().argmax(1)
-        acc += sum(label.numpy() == pred) / float(len(label) * len(test_loader))
-    print('epoch %03d/%03d, test accuracy %.6f' % (i, max_epoch, acc))
+        return self.imagenet_label2_mnist_label(Y_adv)
 
 
+class Adversarial_Reprogramming(object):
+    def __init__(self, args, cfg=cfg):
+        self.mode = args.mode
+        self.gpu = args.gpu
+        self.restore = args.restore
+        self.cfg = cfg
+        self.init_dataset()
+        self.Program = Program(self.cfg, self.gpu)
+        self.set_mode_and_gpu()
+        self.restore_from_file()
+
+    def init_dataset(self):
+        if self.cfg.dataset == 'mnist':
+            train_set = torchvision.datasets.MNIST('./datasets/mnist/', train=True, transform=transforms.ToTensor(), download=True)
+            test_set = torchvision.datasets.MNIST('./datasets/mnist/', train=False, transform=transforms.ToTensor(), download=True)
+            kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
+            self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
+            self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
+        else:
+            raise NotImplementationError()
+
+    def set_mode_and_gpu(self):
+        if self.mode == 'train':
+            # optimizer
+            self.BCE = torch.nn.BCELoss()
+            self.optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.Program.parameters()), lr=self.cfg.lr, betas=(0.5, 0.999))
+            self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=2, gamma=self.cfg.decay)
+            if self.gpu:
+                with torch.cuda.device(self.gpu[0]):
+                    self.BCE.cuda()
+                    self.Program.cuda()
+
+            if len(self.gpu) > 1:
+                self.Program = torch.nn.DataParallel(self.Program, device_ids=self.gpu)
+
+        elif self.mode == 'test':
+            if self.gpu:
+                with torch.cuda.device(self.gpu[0]):
+                    self.Program.cuda()
+
+            if len(self.gpu) > 1:
+                self.Program = torch.nn.DataParallel(self.Program, device_ids=self.gpu)
+
+        else:
+            raise NotImplementationError()
+
+    def restore_from_file(self):
+        if self.restore is not None:
+            ckpt = os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.restore)
+            assert os.path.exists(ckpt)
+            self.Program.load_state_dict(torch.load(ckpt), False)
+            self.start_epoch = self.restore + 1
+            for i in range(self.restore):
+                self.lr_scheduler().step()
+        else:
+            self.start_epoch = 1
+
+    @property
+    def get_W(self):
+        for p in self.Program.parameters():
+            if p.requires_grad:
+                return p
+
+    def imagenet_label2_mnist_label(self, imagenet_label):
+        return imagenet_label[:,:10]
+
+    def tensor2var(self, tensor, requires_grad=False, volatile=False):
+        if self.gpu:
+            with torch.cuda.device(self.gpu[0]):
+                tensor = tensor.cuda()
+        return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
+
+    def compute_loss(self, out, label):
+        label = torch.zeros(self.cfg.batch_size, 10).scatter_(1, label.view(-1,1), 1)
+        label = self.tensor2var(label)
+        return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.get_W) ** 2
+
+    def validate(self):
+        acc = 0.0
+        for i, (image, label) in enumerate(self.test_loader):
+            image = self.tensor2var(image)
+            out = self.Program(image)
+            pred = out.data.cpu().numpy().argmax(1)
+            acc += sum(label.numpy() == pred) / float(len(label) * len(self.test_loader))
+        print('test accuracy: %.6f' % acc)
+
+    def train(self):
+        for i in range(self.start_epoch, self.cfg.max_epoch + 1):
+            self.epoch = i
+            self.lr_scheduler.step()
+            for j, (image, label) in tqdm(enumerate(self.train_loader)):
+                image = self.tensor2var(image)
+                self.out = self.Program(image)
+                self.loss = self.compute_loss(self.out, label)
+                self.optimizer.zero_grad()
+                self.loss.backward()
+                self.optimizer.step()
+            print('epoch: %03d/%03d, loss: %.6f' % (self.epoch, self.cfg.max_epoch, self.loss.data.cpu().numpy()))
+            torch.save({'W': self.get_W}, os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.epoch))
+            self.validate()
+
+    def test(self):
+        pass
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-m', '--mode', default='train', type=str, choices=['train', 'test'])
+    parser.add_argument('-r', '--restore', default=None, action='store', type=int, help='Specify checkpoint id to restore.')
+    parser.add_argument('-g', '--gpu', default=[], nargs='+', type=int, help='Specify GPU ids.')
+    # test params
+
+    args = parser.parse_args()
+    # print(args)
+
+    AR = Adversarial_Reprogramming(args)
+    if args.mode == 'train':
+        AR.train()
+    elif args.mode == 'test':
+        AR.test()
+    else:
+        raise NotImplementationError()
+
+if __name__ == "__main__":
+    main()
