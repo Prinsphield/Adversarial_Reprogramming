@@ -94,20 +94,20 @@ class Adversarial_Reprogramming(object):
             self.optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.Program.parameters()), lr=self.cfg.lr, betas=(0.5, 0.999))
             self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=2, gamma=self.cfg.decay)
             if self.gpu:
-                with torch.cuda.device(self.gpu[0]):
+                with torch.cuda.device(0):
                     self.BCE.cuda()
                     self.Program.cuda()
 
             if len(self.gpu) > 1:
-                self.Program = torch.nn.DataParallel(self.Program, device_ids=self.gpu)
+                self.Program = torch.nn.DataParallel(self.Program, device_ids=list(range(len(self.gpu))))
 
         elif self.mode == 'test':
             if self.gpu:
-                with torch.cuda.device(self.gpu[0]):
+                with torch.cuda.device(0):
                     self.Program.cuda()
 
             if len(self.gpu) > 1:
-                self.Program = torch.nn.DataParallel(self.Program, device_ids=self.gpu)
+                self.Program = torch.nn.DataParallel(self.Program, device_ids=list(range(len(self.gpu))))
 
         else:
             raise NotImplementationError()
@@ -134,7 +134,7 @@ class Adversarial_Reprogramming(object):
 
     def tensor2var(self, tensor, requires_grad=False, volatile=False):
         if self.gpu:
-            with torch.cuda.device(self.gpu[0]):
+            with torch.cuda.device(0):
                 tensor = tensor.cuda()
         return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
 
@@ -174,12 +174,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--mode', default='train', type=str, choices=['train', 'test'])
     parser.add_argument('-r', '--restore', default=None, action='store', type=int, help='Specify checkpoint id to restore.')
-    parser.add_argument('-g', '--gpu', default=[], nargs='+', type=int, help='Specify GPU ids.')
+    parser.add_argument('-g', '--gpu', default=[], nargs='+', type=str, help='Specify GPU ids.')
     # test params
 
     args = parser.parse_args()
     # print(args)
-
+    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(args.gpu)
     AR = Adversarial_Reprogramming(args)
     if args.mode == 'train':
         AR.train()
