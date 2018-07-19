@@ -7,6 +7,9 @@ cfg.net = 'resnet50'
 cfg.dataset = 'mnist'
 
 cfg.train_dir = 'train_log'
+cfg.models_dir = 'models'
+cfg.data_dir = 'datasets'
+
 cfg.batch_size = 240
 cfg.w1 = 224
 cfg.h1 = 224
@@ -20,4 +23,9 @@ cfg.max_epoch = 300
 if not os.path.exists(cfg.train_dir):
     os.makedirs(cfg.train_dir)
 
+if not os.path.exists(cfg.models_dir):
+    os.makedirs(cfg.models_dir)
+
+if not os.path.exists(cfg.data_dir):
+    os.makedirs(cfg.data_dir)
 

@@ -28,7 +28,7 @@ class Program(nn.Module):
     def init_net(self):
         if self.cfg.net == 'resnet50':
             self.net = torchvision.models.resnet50(pretrained=False)
-            self.net.load_state_dict(torch.load('./models/resnet50-19c8e357.pth'))
+            self.net.load_state_dict(torch.load(os.path.join(self.cfg.models_dir, 'resnet50-19c8e357.pth')))
 
             # mean and std for input
             mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -79,8 +79,8 @@ class Adversarial_Reprogramming(object):
 
     def init_dataset(self):
         if self.cfg.dataset == 'mnist':
-            train_set = torchvision.datasets.MNIST('./datasets/mnist/', train=True, transform=transforms.ToTensor(), download=True)
-            test_set = torchvision.datasets.MNIST('./datasets/mnist/', train=False, transform=transforms.ToTensor(), download=True)
+            train_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=True, transform=transforms.ToTensor(), download=True)
+            test_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=False, transform=transforms.ToTensor(), download=True)
             kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
             self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
             self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
