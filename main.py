@@ -119,7 +119,7 @@ class Adversarial_Reprogramming(object):
             self.Program.load_state_dict(torch.load(ckpt), False)
             self.start_epoch = self.restore + 1
             for i in range(self.restore):
-                self.lr_scheduler().step()
+                self.lr_scheduler.step()
         else:
             self.start_epoch = 1
 
