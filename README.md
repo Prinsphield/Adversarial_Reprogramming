@@ -65,5 +65,11 @@ python main.py -m validate -g 0
 
 ## Results
 
+The performance (test accuracy) of ImageNet model reprogrammed on other tasks.
+More experiments are welcomed by pull requests.
 
+| ImageNet Model | MNIST |
+|------|-------|
+|Resnet50| 0.94 |
+|VGG16 | 0.94 |
 
