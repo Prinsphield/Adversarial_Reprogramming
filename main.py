@@ -140,14 +140,9 @@ class Adversarial_Reprogramming(object):
             else:
                 self.Program.load_state_dict(torch.load(ckpt, map_location='cpu'), strict=False)
             self.start_epoch = self.restore + 1
-<<<<<<< HEAD
             if self.mode == 'train':
                 for i in range(self.restore):
                     self.lr_scheduler.step()
-=======
-            for i in range(self.restore):
-                self.lr_scheduler.step()
->>>>>>> 0ce62ff37caf37b79011cbd0e9e3ba4cfedac585
         else:
             self.start_epoch = 1
 
