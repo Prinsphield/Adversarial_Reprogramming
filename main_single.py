@@ -30,7 +30,7 @@ class Adversarial_Reprogramming(object):
     def init_net(self):
         if self.cfg.net == 'resnet50':
             self.net = torchvision.models.resnet50(pretrained=False)
-            self.net.load_state_dict(os.path.join(self.cfg.models_dir, 'resnet50-19c8e357.pth'))
+            self.net.load_state_dict(torch.load(os.path.join(self.cfg.models_dir, 'resnet50-19c8e357.pth')))
 
             # mean and std for input
             mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -62,8 +62,8 @@ class Adversarial_Reprogramming(object):
             train_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=True, transform=transforms.ToTensor(), download=True)
             test_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=False, transform=transforms.ToTensor(), download=True)
             kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-            self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
-            self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
+            self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size_per_gpu, shuffle=True, **kwargs)
+            self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size_per_gpu, shuffle=True, **kwargs)
         else:
             raise NotImplementationError()
 
@@ -90,20 +90,14 @@ class Adversarial_Reprogramming(object):
             self.optimizer = torch.optim.Adam([self.W], lr=self.cfg.lr, betas=(0.5, 0.999))
             self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=2, gamma=self.cfg.decay)
             if self.gpu:
-                with torch.cuda.device(self.gpu[0]):
+                with torch.cuda.device(0):
                     self.BCE.cuda()
                     self.net.cuda()
 
-            # if len(self.gpu) > 1:
-            #     self.W = torch.nn.DataParallel(self.W, device_ids=self.gpu)
-
-        elif self.mode == 'test':
+        elif self.mode == 'validate' or self.mode == 'test':
             if self.gpu:
-                with torch.cuda.device(self.gpu[0]):
+                with torch.cuda.device(0):
                     self.net.cuda()
-
-            # if len(self.gpu) > 1:
-            #     self.W = torch.nn.DataParallel(self.W, device_ids=self.gpu)
 
         else:
             raise NotImplementationError()
@@ -113,13 +107,13 @@ class Adversarial_Reprogramming(object):
 
     def tensor2var(self, tensor, requires_grad=False, volatile=False):
         if self.gpu:
-            with torch.cuda.device(self.gpu[0]):
+            with torch.cuda.device(0):
                 tensor = tensor.cuda()
         return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
 
     def forward(self, image):
         image = np.tile(image, (1,3,1,1))
-        X = np.zeros((self.cfg.batch_size, 3, self.cfg.h1, self.cfg.w1), dtype=np.float32)
+        X = np.zeros((self.cfg.batch_size_per_gpu, 3, self.cfg.h1, self.cfg.w1), dtype=np.float32)
         X[:,:,(self.cfg.h1-self.cfg.h2)//2:(self.cfg.h1+self.cfg.h2)//2, (self.cfg.w1-self.cfg.w2)//2:(self.cfg.w1+self.cfg.w2)//2] = image
         X = self.tensor2var(torch.from_numpy(X))
 
@@ -132,7 +126,7 @@ class Adversarial_Reprogramming(object):
         return self.imagenet_label2_mnist_label(Y_adv)
 
     def compute_loss(self, out, label):
-        label = torch.zeros(self.cfg.batch_size, 10).scatter_(1, label.view(-1,1), 1)
+        label = torch.zeros(self.cfg.batch_size_per_gpu, 10).scatter_(1, label.view(-1,1), 1)
         label = self.tensor2var(label)
         return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.W) ** 2
 
@@ -149,6 +143,7 @@ class Adversarial_Reprogramming(object):
             self.epoch = i
             self.lr_scheduler.step()
             for j, (image, label) in tqdm(enumerate(self.train_loader)):
+                if j > 100: continue;
                 self.out = self.forward(image)
                 self.loss = self.compute_loss(self.out, label)
                 self.optimizer.zero_grad()
@@ -163,7 +158,7 @@ class Adversarial_Reprogramming(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--mode', default='train', type=str, choices=['train', 'test'])
+    parser.add_argument('-m', '--mode', default='train', type=str, choices=['train', 'validate', 'test'])
     parser.add_argument('-r', '--restore', default=None, action='store', type=int, help='Specify checkpoint id to restore.')
     parser.add_argument('-g', '--gpu', default=[], nargs='+', type=str, help='Specify GPU ids.')
     # test params

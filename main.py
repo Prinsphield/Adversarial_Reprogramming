@@ -69,9 +69,9 @@ class Program(nn.Module):
     def forward(self, image):
         image = image.repeat(1,3,1,1)
         if self.gpu:
-            X = image.data.new(self.cfg.batch_size//len(self.gpu), 3, self.cfg.h1, self.cfg.w1)
+            X = image.data.new(self.cfg.batch_size_per_gpu, 3, self.cfg.h1, self.cfg.w1)
         else:
-            X = image.data.new(self.cfg.batch_size, 3, self.cfg.h1, self.cfg.w1)
+            X = image.data.new(self.cfg.batch_size_per_gpu, 3, self.cfg.h1, self.cfg.w1)
         X[:] = 0
 
         X[:,:,int((self.cfg.h1-self.cfg.h2)//2):int((self.cfg.h1+self.cfg.h2)//2), int((self.cfg.w1-self.cfg.w2)//2):int((self.cfg.w1+self.cfg.w2)//2)] = image.data.clone()
@@ -101,8 +101,8 @@ class Adversarial_Reprogramming(object):
             train_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=True, transform=transforms.ToTensor(), download=True)
             test_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=False, transform=transforms.ToTensor(), download=True)
             kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-            self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
-            self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
+            self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size_per_gpu*len(self.gpu), shuffle=True, **kwargs)
+            self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size_per_gpu*len(self.gpu), shuffle=True, **kwargs)
         else:
             raise NotImplementationError()
 
@@ -162,7 +162,7 @@ class Adversarial_Reprogramming(object):
         return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
 
     def compute_loss(self, out, label):
-        label = torch.zeros(self.cfg.batch_size, 10).scatter_(1, label.view(-1,1), 1)
+        label = torch.zeros(self.cfg.batch_size_per_gpu*len(self.gpu), 10).scatter_(1, label.view(-1,1), 1)
         label = self.tensor2var(label)
         return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.get_W) ** 2
 
@@ -180,7 +180,6 @@ class Adversarial_Reprogramming(object):
             self.epoch = i
             self.lr_scheduler.step()
             for j, (image, label) in tqdm(enumerate(self.train_loader)):
-                if j > 1000: continue;
                 image = self.tensor2var(image)
                 self.out = self.Program(image)
                 self.loss = self.compute_loss(self.out, label)
