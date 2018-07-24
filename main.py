@@ -37,8 +37,22 @@ class Program(nn.Module):
             std = std[..., np.newaxis, np.newaxis]
             self.mean = Parameter(torch.from_numpy(mean), requires_grad=False)
             self.std = Parameter(torch.from_numpy(std), requires_grad=False)
+
+        elif self.cfg.net == 'vgg16':
+            self.net = torchvision.models.vgg16(pretrained=False)
+            self.net.load_state_dict(torch.load(os.path.join(self.cfg.models_dir, 'vgg16-397923af.pth')))
+
+            # mean and std for input
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            mean = mean[..., np.newaxis, np.newaxis]
+            std = np.array([0.229, 0.224, 0.225],dtype=np.float32)
+            std = std[..., np.newaxis, np.newaxis]
+            self.mean = Parameter(torch.from_numpy(mean), requires_grad=False)
+            self.std = Parameter(torch.from_numpy(std), requires_grad=False)
+
         else:
             raise NotImplementationError()
+
         self.net.eval()
         for param in self.net.parameters():
             param.requires_grad = False
@@ -54,7 +68,12 @@ class Program(nn.Module):
 
     def forward(self, image):
         image = image.repeat(1,3,1,1)
-        X = image.data.new(self.cfg.batch_size//len(self.gpu), 3, self.cfg.h1, self.cfg.w1)
+        if self.gpu:
+            X = image.data.new(self.cfg.batch_size//len(self.gpu), 3, self.cfg.h1, self.cfg.w1)
+        else:
+            X = image.data.new(self.cfg.batch_size, 3, self.cfg.h1, self.cfg.w1)
+        X[:] = 0
+
         X[:,:,int((self.cfg.h1-self.cfg.h2)//2):int((self.cfg.h1+self.cfg.h2)//2), int((self.cfg.w1-self.cfg.w2)//2):int((self.cfg.w1+self.cfg.w2)//2)] = image.data.clone()
         X = Variable(X, requires_grad=True)
 
@@ -101,7 +120,7 @@ class Adversarial_Reprogramming(object):
             if len(self.gpu) > 1:
                 self.Program = torch.nn.DataParallel(self.Program, device_ids=list(range(len(self.gpu))))
 
-        elif self.mode == 'test':
+        elif self.mode == 'validate' or self.mode == 'test':
             if self.gpu:
                 with torch.cuda.device(0):
                     self.Program.cuda()
@@ -116,10 +135,19 @@ class Adversarial_Reprogramming(object):
         if self.restore is not None:
             ckpt = os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.restore)
             assert os.path.exists(ckpt)
-            self.Program.load_state_dict(torch.load(ckpt), False)
+            if self.gpu:
+                self.Program.load_state_dict(torch.load(ckpt), strict=False)
+            else:
+                self.Program.load_state_dict(torch.load(ckpt, map_location='cpu'), strict=False)
             self.start_epoch = self.restore + 1
+<<<<<<< HEAD
+            if self.mode == 'train':
+                for i in range(self.restore):
+                    self.lr_scheduler.step()
+=======
             for i in range(self.restore):
                 self.lr_scheduler.step()
+>>>>>>> 0ce62ff37caf37b79011cbd0e9e3ba4cfedac585
         else:
             self.start_epoch = 1
 
@@ -145,7 +173,7 @@ class Adversarial_Reprogramming(object):
 
     def validate(self):
         acc = 0.0
-        for i, (image, label) in enumerate(self.test_loader):
+        for k, (image, label) in enumerate(self.test_loader):
             image = self.tensor2var(image)
             out = self.Program(image)
             pred = out.data.cpu().numpy().argmax(1)
@@ -157,6 +185,7 @@ class Adversarial_Reprogramming(object):
             self.epoch = i
             self.lr_scheduler.step()
             for j, (image, label) in tqdm(enumerate(self.train_loader)):
+                if j > 1000: continue;
                 image = self.tensor2var(image)
                 self.out = self.Program(image)
                 self.loss = self.compute_loss(self.out, label)
@@ -172,7 +201,7 @@ class Adversarial_Reprogramming(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--mode', default='train', type=str, choices=['train', 'test'])
+    parser.add_argument('-m', '--mode', default='train', type=str, choices=['train', 'validate', 'test'])
     parser.add_argument('-r', '--restore', default=None, action='store', type=int, help='Specify checkpoint id to restore.')
     parser.add_argument('-g', '--gpu', default=[], nargs='+', type=str, help='Specify GPU ids.')
     # test params
@@ -183,6 +212,8 @@ def main():
     AR = Adversarial_Reprogramming(args)
     if args.mode == 'train':
         AR.train()
+    elif args.mode == 'validate':
+        AR.validate()
     elif args.mode == 'test':
         AR.test()
     else:

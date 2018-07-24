@@ -30,7 +30,7 @@ class Adversarial_Reprogramming(object):
     def init_net(self):
         if self.cfg.net == 'resnet50':
             self.net = torchvision.models.resnet50(pretrained=False)
-            self.net.load_state_dict(torch.load('./models/resnet50-19c8e357.pth'))
+            self.net.load_state_dict(os.path.join(self.cfg.models_dir, 'resnet50-19c8e357.pth'))
 
             # mean and std for input
             mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -39,14 +39,28 @@ class Adversarial_Reprogramming(object):
             std = std[..., np.newaxis, np.newaxis]
             self.mean = self.tensor2var(torch.from_numpy(mean))
             self.std = self.tensor2var(torch.from_numpy(std))
+
+        elif self.cfg.net == 'vgg16':
+            self.net = torchvision.models.vgg16(pretrained=False)
+            self.net.load_state_dict(torch.load(os.path.join(self.cfg.models_dir, 'vgg16-397923af.pth')))
+
+            # mean and std for input
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            mean = mean[..., np.newaxis, np.newaxis]
+            std = np.array([0.229, 0.224, 0.225],dtype=np.float32)
+            std = std[..., np.newaxis, np.newaxis]
+            self.mean = Parameter(torch.from_numpy(mean), requires_grad=False)
+            self.std = Parameter(torch.from_numpy(std), requires_grad=False)
+
         else:
             raise NotImplementationError()
+
         self.net.eval()
 
     def init_dataset(self):
         if self.cfg.dataset == 'mnist':
-            train_set = torchvision.datasets.MNIST('./datasets/mnist/', train=True, transform=transforms.ToTensor(), download=True)
-            test_set = torchvision.datasets.MNIST('./datasets/mnist/', train=False, transform=transforms.ToTensor(), download=True)
+            train_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=True, transform=transforms.ToTensor(), download=True)
+            test_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=False, transform=transforms.ToTensor(), download=True)
             kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
             self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
             self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size, shuffle=True, **kwargs)
@@ -151,15 +165,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--mode', default='train', type=str, choices=['train', 'test'])
     parser.add_argument('-r', '--restore', default=None, action='store', type=int, help='Specify checkpoint id to restore.')
-    parser.add_argument('-g', '--gpu', default=[], nargs='+', type=int, help='Specify GPU ids.')
+    parser.add_argument('-g', '--gpu', default=[], nargs='+', type=str, help='Specify GPU ids.')
     # test params
 
     args = parser.parse_args()
     # print(args)
-
+    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(args.gpu)
     AR = Adversarial_Reprogramming(args)
     if args.mode == 'train':
         AR.train()
+    elif args.mode == 'validate':
+        AR.validate()
     elif args.mode == 'test':
         AR.test()
     else:
