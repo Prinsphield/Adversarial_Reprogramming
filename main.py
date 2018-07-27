@@ -98,8 +98,12 @@ class Adversarial_Reprogramming(object):
             train_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=True, transform=transforms.ToTensor(), download=True)
             test_set = torchvision.datasets.MNIST(os.path.join(self.cfg.data_dir, 'mnist'), train=False, transform=transforms.ToTensor(), download=True)
             kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-            self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size_per_gpu*len(self.gpu), shuffle=True, **kwargs)
-            self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size_per_gpu*len(self.gpu), shuffle=True, **kwargs)
+            if self.gpu:
+                self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size_per_gpu*len(self.gpu), shuffle=True, **kwargs)
+                self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size_per_gpu*len(self.gpu), shuffle=True, **kwargs)
+            else:
+                self.train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.cfg.batch_size_per_gpu, shuffle=True, **kwargs)
+                self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.cfg.batch_size_per_gpu, shuffle=True, **kwargs)
         else:
             raise NotImplementationError()
 
@@ -159,7 +163,10 @@ class Adversarial_Reprogramming(object):
         return Variable(tensor, requires_grad=requires_grad, volatile=volatile)
 
     def compute_loss(self, out, label):
-        label = torch.zeros(self.cfg.batch_size_per_gpu*len(self.gpu), 10).scatter_(1, label.view(-1,1), 1)
+        if self.gpu:
+            label = torch.zeros(self.cfg.batch_size_per_gpu*len(self.gpu), 10).scatter_(1, label.view(-1,1), 1)
+        else:
+            label = torch.zeros(self.cfg.batch_size_per_gpu, 10).scatter_(1, label.view(-1,1), 1)
         label = self.tensor2var(label)
         return self.BCE(out, label) + self.cfg.lmd * torch.norm(self.get_W) ** 2
 
