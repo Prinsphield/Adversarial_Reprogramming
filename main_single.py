@@ -70,7 +70,7 @@ class Adversarial_Reprogramming(object):
     def init_mask(self):
         M = np.ones((3, self.cfg.h1, self.cfg.w1), dtype=np.float32)
         c_w, c_h = int(np.ceil(self.cfg.w1/2.)), int(np.ceil(self.cfg.h1/2.))
-        M[:,c_h-self.cfg.h2//2:c_h+self.cfg.h2, c_w-self.cfg.w2//2:c_w+self.cfg.w2//2] = 0
+        M[:,c_h-self.cfg.h2//2:c_h+self.cfg.h2//2, c_w-self.cfg.w2//2:c_w+self.cfg.w2//2] = 0
         self.M = self.tensor2var(torch.from_numpy(M))
 
     def init_weight(self):
