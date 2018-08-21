@@ -18,7 +18,7 @@ cfg.h2 = 28
 cfg.lmd = 5e-7
 cfg.lr = 0.05
 cfg.decay = 0.96
-cfg.max_epoch = 300
+cfg.max_epoch = 30
 
 if not os.path.exists(cfg.train_dir):
     os.makedirs(cfg.train_dir)

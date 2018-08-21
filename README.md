@@ -60,7 +60,7 @@ for more experiments.
 
 Simply running the following command.
 ```
-python main.py -m validate -g 0
+python main.py -m validate -g 0 -r 5
 ```
 
 ## Results
