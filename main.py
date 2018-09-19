@@ -90,8 +90,8 @@ class Adversarial_Reprogramming(object):
         self.cfg = cfg
         self.init_dataset()
         self.Program = Program(self.cfg, self.gpu)
-        self.set_mode_and_gpu()
         self.restore_from_file()
+        self.set_mode_and_gpu()
 
     def init_dataset(self):
         if self.cfg.dataset == 'mnist':
@@ -107,12 +107,26 @@ class Adversarial_Reprogramming(object):
         else:
             raise NotImplementationError()
 
+    def restore_from_file(self):
+        if self.restore is not None:
+            ckpt = os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.restore)
+            assert os.path.exists(ckpt)
+            if self.gpu:
+                self.Program.load_state_dict(torch.load(ckpt), strict=False)
+            else:
+                self.Program.load_state_dict(torch.load(ckpt, map_location='cpu'), strict=False)
+            self.start_epoch = self.restore + 1
+        else:
+            self.start_epoch = 1
+
     def set_mode_and_gpu(self):
         if self.mode == 'train':
             # optimizer
             self.BCE = torch.nn.BCELoss()
             self.optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.Program.parameters()), lr=self.cfg.lr, betas=(0.5, 0.999))
             self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=2, gamma=self.cfg.decay)
+            for i in range(self.restore):
+                self.lr_scheduler.step()
             if self.gpu:
                 with torch.cuda.device(0):
                     self.BCE.cuda()
@@ -131,21 +145,6 @@ class Adversarial_Reprogramming(object):
 
         else:
             raise NotImplementationError()
-
-    def restore_from_file(self):
-        if self.restore is not None:
-            ckpt = os.path.join(self.cfg.train_dir, 'W_%03d.pt' % self.restore)
-            assert os.path.exists(ckpt)
-            if self.gpu:
-                self.Program.load_state_dict(torch.load(ckpt), strict=False)
-            else:
-                self.Program.load_state_dict(torch.load(ckpt, map_location='cpu'), strict=False)
-            self.start_epoch = self.restore + 1
-            if self.mode == 'train':
-                for i in range(self.restore):
-                    self.lr_scheduler.step()
-        else:
-            self.start_epoch = 1
 
     @property
     def get_W(self):
@@ -180,10 +179,10 @@ class Adversarial_Reprogramming(object):
         print('test accuracy: %.6f' % acc)
 
     def train(self):
-        for i in range(self.start_epoch, self.cfg.max_epoch + 1):
-            self.epoch = i
+        for self.epoch in range(self.start_epoch, self.cfg.max_epoch + 1):
             self.lr_scheduler.step()
             for j, (image, label) in tqdm(enumerate(self.train_loader)):
+                if j > 3: break;
                 image = self.tensor2var(image)
                 self.out = self.Program(image)
                 self.loss = self.compute_loss(self.out, label)
